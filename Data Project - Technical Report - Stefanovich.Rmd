@@ -1,0 +1,594 @@
+---
+title: 'Death in New York City: Technical Report'
+author: "Emma Stefanovich"
+date: "5/17/2022"
+output:
+  pdf_document: default
+  html_document: default
+  word_document: default
+---
+
+## Intro: Setup and Cleaning
+
+### Introduction
+
+In public health, developing an intervention plan for a disease or condition means first understanding the issue you want to address inside an out. One step in this process is understanding how different people are affected and to what extent they are affected--after all, your efforts must be targeted in order to create a cost-effective plan. I am studying public health, so I wanted to try this process of discovering how different groups of people experience conditions differently. I ended up focusing on New York City, mainly due to my interest in urban health issues and the city being a large sample of a diverse American population.
+
+I focused on two main aspects of New York City (NYC): their demographics and the causes of death they experience.
+As such, I found two data sets to analyze.
+
+The first was [New York City Census Data](https://www.kaggle.com/datasets/muonneutrino/new-york-city-census-data?resource=download). I found this data set on Kaggle, which is a community-driven data set hosting website owned by Google.
+The author of this Kaggle data set just combined the Census Bureau data with the census tract coordinate data into one clean data set. This data set contains demographic data from the U.S. Census Bureau (sourced from the 2015 American Community Survey) as well as census block coordinate data (sourced from the FCC Census Block Conversions API) for each census tract. The data consists of 36 variables with 2,167 total observations. Each data point represents averages for a census tract. The variables we will use include:
+
+-   CensusTract (census tract ID number)
+-   County
+-   Borough
+-   TotalPop (total population of a census tract)
+-   Men (number of men in a census tract)
+-   Women (number of women in a census tract)
+-   Hispanic (percent of census tract population that is Hispanic)
+-   White (percent of census tract population that is White)
+-   Black (percent of census tract population that is Black)
+-   Native (percent of census tract population that is Native American)
+-   Asian (percent of census tract population that is Asian)
+-   Income (average income of a census tract)
+-   Poverty (percent of a census tract's population that lives in poverty)
+
+The second was [New York City Leading Causes of Death](https://data.cityofnewyork.us/Health/New-York-City-Leading-Causes-of-Death/jb7j-dtam). It can be found on NYC OpenData, which is an open database website operated by the City of New York government. This data set details the leading causes of death in New York City for 2019 and 2014 through 2007, grouped by gender and race. The data consists of 7 variables with 1,272 total observations. We will keep all of the variables, but we will have to do some serious cleaning later on. Each data point represents the total or average value for one demographic group (ex: Hispanic males, White females, Black females, etc.) in a particular year for a particular cause of death. A cause of death is accompanied by its ICD-10 code. We will not use the codes, but they will cause problems later on when we clean the data. The variables we will use include:
+
+-   Year
+-   Cause (cause of death)
+-   Sex
+-   Race
+-   Deaths (number of deaths due to a cause)
+-   Death_Rate (deaths from a cause per 100,000 people in a population)
+-   Age_Adj_Death_Rate (death rate adjusted for the sizes of each age group in a population)
+
+Of course, we must acknowledge that the variables in both data sets are a simplified version of reality: just counting men and women and just counting Hispanic, White, Black, Asian, and Native American people is not true to real life. However, what data is present in these data sets can still provide helpful insights into the differences between people's experiences with wealth and health in New York City.
+
+After cleaning the data sets, we can create visuals to explore what patterns existed in the data. My main research questions were:
+
+-   How do income and rates of poverty differ between races?
+-   Which causes of death are the most severe?
+-   Do some causes of death affect people of certain races more than others?
+-   Do people of some races die from preventable causes more often than others?
+
+With these questions in mind, let's get started on cleaning the data sets.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, error = FALSE)
+```
+
+Start by importing all necessary libraries and reading in the .csv files for the data sets and saving them into objects, then selecting the right variables from the census data set. Arrange the census data by census tract number and the cause of deaths data by year so they're easier to read when we're coding.
+
+```{r}
+library(readr)
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+library(plotly)
+
+deaths_unclean <- read_csv("NYC_death_causes.csv")
+census_unclean <- read_csv("NYC_ACS_census_2015.csv")
+
+# Deaths - arrange by year
+
+deaths <- deaths_unclean %>% 
+  arrange(desc(Year))
+
+# Census - select variables of interest and arrange by census tract
+
+census <- census_unclean %>% 
+  select(-12, -(14:16), -(18:30), -(32:35)) %>% 
+  arrange(CensusTract)
+```
+
+### Cleaning: Cause of Death Data
+
+Start by renaming the variables to more coding-friendly names, as well as converting variables that should be numerical values from string values. These are the variables Deaths, Death_Rate, and Age_Adj_Death_Rate.
+
+```{r}
+#Rename variables
+
+colnames(deaths)[2] <- "Cause"
+colnames(deaths)[4] <- "Race"
+colnames(deaths)[5] <- "Deaths"
+colnames(deaths)[6] <- "Death_Rate"
+colnames(deaths)[7] <- "Age_Adj_Death_Rate"
+
+#Convert character values to integers
+
+deaths$Deaths <- as.integer(deaths$Deaths)
+deaths$Death_Rate <- as.numeric(deaths$Death_Rate)
+deaths$Age_Adj_Death_Rate <- as.numeric(deaths$Age_Adj_Death_Rate)
+```
+
+Some missing data is currently represented by periods "." so replace them with NA values for consistency.
+
+```{r}
+#Change periods to NAs to ensure all missing data is represented with NAs
+
+deaths[deaths == '.'] <- NA
+```
+
+Sometimes the data set uses "Male" and "Female", sometimes it uses "M" and "F". Fix the inconsistency by recoding "M" to "Male" and "F" to "Female".
+
+```{r}
+#Change M and F to Male and Female to maintain consistency across all years
+
+deaths <- deaths %>%  mutate(Sex = recode(Sex, 
+                        "M" = "Male",
+                        "F" = "Female"))
+```
+
+There is one spelling mistake for a cause of death ("posioning"), so fix it. There is also an inconsistency between the codes for a cause of death, so change all of the instances of this cause to the same code. We are also going to get rid of the ICD-10 codes to give each cause of death a much simpler and easier to read name. To do so, recode each cause of death with a simpler name. This will make visualizations much easier to read.
+
+```{r}
+#Fix spelling and code mistakes
+deaths <- deaths %>%  mutate(Cause = recode(Cause, 
+                        "Accidents Except Drug Posioning (V01-X39, X43, X45-X59, Y85-Y86)" = "Accidents Except Drug Poisoning (V01-X39, X43, X45-X59, Y85-Y86)",
+                        "Chronic Liver Disease and Cirrhosis (K70, K73)" = "Chronic Liver Disease and Cirrhosis (K70, K73-K74)",
+                        "Assault (Homicide: Y87.1, X85-Y09)" = "Assault (Homicide: U01-U02, Y87.1, X85-Y09)",
+                        "Intentional Self-Harm (Suicide: X60-X84, Y87.0)" = "Intentional Self-Harm (Suicide: U03, X60-X84, Y87.0)"))
+
+#Rename to simpler names with no ICD-10 codes
+
+deaths <- deaths %>%  mutate(Cause = recode(Cause, 
+                        "Diseases of Heart (I00-I09, I11, I13, I20-I51)" = "Heart Disease",
+                        "Malignant Neoplasms (Cancer: C00-C97)" = "Cancer",
+                        "Influenza (Flu) and Pneumonia (J09-J18)" = "Influenza/Pneumonia",
+                        "Diabetes Mellitus (E10-E14)" = "Diabetes",
+                        "Chronic Lower Respiratory Diseases (J40-J47)" = "Chronic Lower Respiratory Diseases",
+                        "Cerebrovascular Disease (Stroke: I60-I69)" = "Stroke",
+                        "Accidents Except Drug Poisoning (V01-X39, X43, X45-X59, Y85-Y86)" = "Accidents except Drug Poisoning",
+                        "Essential Hypertension and Renal Diseases (I10, I12)" = "Hypertension and Renal Disease",
+                        "Mental and Behavioral Disorders due to Accidental Poisoning and Other Psychoactive Substance Use (F11-F16, F18-F19, X40-X42, X44)" = "Mental Disorder from Accidental Substance Poisoning",
+                        "Human Immunodeficiency Virus Disease (HIV: B20-B24)" = "HIV",
+                        "Alzheimer's Disease (G30)" = "Alzheimer's",
+                        "Intentional Self-Harm (Suicide: U03, X60-X84, Y87.0)" = "Intentional Self Harm",
+                        "Assault (Homicide: U01-U02, Y87.1, X85-Y09)" = "Assault",
+                        "Chronic Liver Disease and Cirrhosis (K70, K73-K74)" = "Chronic Liver Disease and Cirrhosis",
+                        "Nephritis, Nephrotic Syndrome and Nephrisis (N00-N07, N17-N19, N25-N27)" = "Kidney Disease",
+                        "Septicemia (A40-A41)" = "Septicemia",
+                        "Certain Conditions originating in the Perinatal Period (P00-P96)" = "Perinatal Conditions",
+                        "Congenital Malformations, Deformations, and Chromosomal Abnormalities (Q00-Q99)" = "Birth Defects/Genetic Conditions",
+                        "Viral Hepatitis (B15-B19)" = "Hepatitis",
+                        "Mental and Behavioral Disorders due to Use of Alcohol (F10)" = "Mental Disorder from Alcohol",
+                        "Insitu or Benign / Uncertain Neoplasms (D00-D48)" = "Benign/Unknown Tumor",
+                        "Complications of Medical and Surgical Care (Y40-Y84, Y88)" = "Medical/Surgical Complications",
+                        "Aortic Aneurysm and Dissection (I71)" = "Aortic Aneurysm and Dissection",
+                        "Cholelithiasis and Disorders of Gallbladder (K80-K82)" = "Gallbladder Diseases",
+                        "Anemias (D50-D64)" = "Anemia",
+                        "Parkinson's Disease (G20)" = "Parkinson's",
+                        "Peptic Ulcer (K25-K28)" = "Peptic Ulcer",
+                        "Tuberculosis (A16-A19)" = "Tuberculosis",
+                        "Atherosclerosis (I70)" = "Atherosclerosis"
+                        ))
+```
+
+There are also inconsistencies in the race names. Let's recode them to be simpler and consistent. This way, they will match the race values from the census data set. We want to end up with the names White, Black, Hispanic, Asian, Unknown, and Other.
+
+```{r}
+#Change race values into simpler and non-redundant values so it's easier to compare to the census data
+
+deaths <- deaths %>%  mutate(Race = recode(Race, 
+                        "Asian and Pacific Islander" = "Asian",
+                        "Non-Hispanic White" = "White",
+                        "White Non-Hispanic" = "White",
+                        "Non-Hispanic Black" = "Black",
+                        "Black Non-Hispanic" = "Black",
+                        "Other Race/ Ethnicity" = "Other",
+                        "Not Stated/Unknown" = "Unknown"))
+```
+
+Now, add on a new variable to the data set: Preventable. This variable will provide a boolean (T/F) value saying if a cause of death is preventable or not. A cause of death is considered preventable if there is any intervention, treatment, medicine, surgery, or behavior change that exists to lessen the likelihood of a death from a certain cause. To do so, make a table of distinct causes of death and add your own column called "Preventable" on. Then, you'll need to manually add true or false values corresponding to each cause of death. Then, you can full join this to the original causes of death data.
+
+```{r}
+#Make table of all causes of death
+
+death_preventable <- distinct(data.frame(deaths$Cause))
+colnames(death_preventable)[1] <- "Cause"
+
+#Add "Preventable" variable
+#Preventability is based on if there's behavior changes, treatments, or interventions that would prevent the death or not
+
+death_preventable$Preventable <- c(
+  T, #heart disease
+  T, #cancer
+  T, #mental disorders from substance
+  T, #diabetes
+  T, #influenza/pneumonia
+  T, #stroke
+  F, #accidents except drug poisoning
+  T, #liver disease
+  T, #chronic lower respiratory diseases
+  T, #hypertension and renal diseases
+  NA, #all other causes
+  F, #intentional self harm
+  F, #Alzheimer's
+  F, #assault
+  T, #mental disorders from alcohol
+  T, #birth defects/genetic conditions
+  F, #aortic aneurysm and dissection
+  T, #hepatitis
+  T, #septicemia
+  T, #medical complications
+  T, #HIV
+  T, #gallbladder diseases
+  T, #perinatal conditions
+  T, #kidney disease
+  F, #benign/unknown tumors
+  T, #anemia
+  F, #Parkinson's
+  T, #peptic ulcer
+  T, #tuberculosis
+  T #atherosclerosis
+  )
+
+#Outer join original deaths table with preventable causes table.
+
+deaths <- full_join(deaths, death_preventable, by = "Cause")
+```
+
+For analysis purposes later on, let's make a table of each cause of death and the number of deaths it was responsible for. Be sure to drop any NA values for deaths. Group it by cause. Then, join the preventable variable to this table with a full join. Join it by cause. You can also arrange this new table in descending order by total deaths.
+
+```{r}
+#Make table of number of deaths per cause
+
+deaths_totals <- deaths %>% 
+  drop_na(Deaths) %>% 
+  group_by(Cause) %>% 
+  summarize(Deaths_total = sum(Deaths))
+
+#Join preventable variable
+
+deaths_totals <- full_join(death_preventable, deaths_totals, by = "Cause")
+
+#Arrange in descending order
+
+deaths_totals <- deaths_totals %>% arrange(desc(Deaths_total))
+```
+
+Again, for later analysis purposes, make a table of the total number of deaths per race. Do so by taking the original deaths data, dropping NA values, grouping it by cause and race, creating a new variable deaths per race (total number of deaths), and joining it with the deaths_totals table we just made. You can arrange it in descending order of deaths.
+
+```{r}
+#Make new table of deaths per race
+
+deaths_totals_race <- deaths %>% 
+  drop_na(Deaths) %>% 
+  group_by(Cause, Race) %>% 
+  summarize(Deaths_per_race = sum(Deaths)) %>% 
+  full_join(deaths_totals, by = "Cause") %>% 
+  arrange(desc(Deaths_total))
+```
+
+Let's also make a table of each cause of death with its age adjusted death rate for analysis later on. Again, be sure to drop any NA values. Group by cause again. Then make a new variable, average age adjusted death rate, that is the mean of age adjusted death rate for each cause. We'll want to take the average age adjusted death rate for each cause, since the rates vary between demographics. You can arrange the data in descending order. Then, make a new table of each distinct cause of death and the average age adjusted death rate associated with it. Include the cause, average age adjusted death rate, and preventable variables. Then rename the columns back to their original names.
+
+```{r}
+#Make table of average age adjusted death rate per cause
+
+deaths_rates <- deaths %>% 
+  select(Cause, Age_Adj_Death_Rate, Preventable) %>% 
+  drop_na(Age_Adj_Death_Rate) %>% 
+  group_by(Cause) %>% 
+  mutate(Avg_adj_death_rate = mean(Age_Adj_Death_Rate)) %>% 
+  arrange(desc(Age_Adj_Death_Rate))
+
+death_rates_distinct <- distinct(data.frame(deaths_rates$Cause,
+                                 deaths_rates$Avg_adj_death_rate,
+                                 deaths_rates$Preventable))
+
+#Rename the variable names back to what they originally were
+
+colnames(death_rates_distinct)[1] <- "Cause"
+colnames(death_rates_distinct)[2] <- "Avg_age_adj_death_rate"
+colnames(death_rates_distinct)[3] <- "Preventable"
+```
+
+### Cleaning: Census Data
+
+The first thing to note about the census data is that the columns for each race (White, Hispanic, Black, Asian, Native) are actually the percent of the total population of a census tract that a race makes up. So, let's rename those variables to reflect this. As well, change any NA values to 0 values for consistency and to avoid issues later on.
+
+```{r}
+#The values in these columns are the percent of each race in a borough, so we should rename the variables to reflect that
+
+colnames(census)[7] <- "Hispanic_percent"
+colnames(census)[8] <- "White_percent"
+colnames(census)[9] <- "Black_percent"
+colnames(census)[10] <- "Native_percent"
+colnames(census)[11] <- "Asian_percent"
+
+#Change NA values to 0 values
+
+census[is.na(census)] <- 0
+```
+
+Now, add on four new columns that give the total number of residents of each race per census tract. You can find this value y dividing a race percent variable (the one we just renamed) by 100, and then multiplying it by the TotalPop variable.
+
+```{r}
+#Add new columns to show the number of people of each race in each borough by using the variables of the race percentage variables and the total population variable
+
+census <- census %>% mutate(
+    Hispanic = (Hispanic_percent / 100) * TotalPop,
+    White = (White_percent / 100) * TotalPop,
+    Black = (Black_percent / 100) * TotalPop,
+    Native = (Native_percent / 100) * TotalPop,
+    Asian = (Asian_percent / 100) * TotalPop)
+```
+
+For analysis purposes later on, let's make a small table of the total number of people of each race in New York City. To do this, make a new data table with each column containing the sum of each tract population for each race. Then, rename the columns to their original names.
+
+```{r}
+#Table of total people of each race
+
+census_races <- data.frame(sum(census$Hispanic),
+                           sum(census$White),
+                           sum(census$Black),
+                           sum(census$Native),
+                           sum(census$Asian))
+
+#Rename the variable names back to what they originally were
+
+colnames(census_races)[1] <- "Hispanic"
+colnames(census_races)[2] <- "White"
+colnames(census_races)[3] <- "Black"
+colnames(census_races)[4] <- "Native"
+colnames(census_races)[5] <- "Asian"
+```
+
+## Data Visualizations
+
+### Demographics: Census Data
+
+This first graph shows the number of people of each race throughout the entirety of New York City, in all boroughs and census tracts. 
+To make it, first turn off scientific notation. Then, you will want to pivot longer the census_races data so it is easier to graph (names to race and values to total population). Next, create a bar graph with race on the x-axis and total on the y-axis. Reorder the total population in ascending order. You can also fill the bars by race to make the bars easier to distinguish.
+
+```{r}
+#Graph
+
+options(scipen = 1000)
+census_races %>% pivot_longer(cols = c(1:5),
+                              names_to = "Race",
+                              values_to = "Total") %>%
+
+ggplot(aes(x = reorder(Race, Total), y = Total, fill = Race)) + 
+  geom_bar(stat = "Identity") +
+  labs(x = "Race", y = "Total") +
+  ggtitle("Total Residents of Each Race") +
+  theme_minimal()
+```
+
+It is important to note just how small the Native American population is in NYC. As a result, I decided to exclude Native American populations from further analysis. This was due to the relatively tiny sample size in the census data as well as the causes of death data not having a Native American race option.
+
+Next, this is a summary of the number of men and women in each census tract of NYC. These results did not include tracts with zero residents. 
+To get this summary, make a table of the number of men and the number of women per census tract. Rename the columns to their original values. Then, take a summary of this table for the tracts where the number of men and the number of women are not equal to zero.
+
+```{r}
+#Table of each gender per census tract
+
+census_sexes <- data.frame(census$Men,
+                           census$Women)
+
+#Rename the variable names back to what they originally were
+
+colnames(census_sexes)[1] <- "Men"
+colnames(census_sexes)[2] <- "Women"
+
+#Summary
+summary(filter(census_sexes, Men != 0 & Women != 0))
+```
+
+From it, we can see that the average number of men per tract is 1,893 and the average number of women per tract is 2,080. The most populous tract has 13,460 men and 15,466 women. Interestingly, the least populous tract has only 4 men and 4 women. Overall, though, it seems that there are an almost equal number of men and women in NYC, with slightly more women in all.
+
+Below is a set of four bar graphs that show the number of people of a particular race in each borough, with one graph per race group. 
+To make it, start by making a bar graph of the total population of a race on the y-axis and the borough names on the x-axis. Be sure to filter out tracts with a zero total population. Repeat this process for each race group except "Native", saving each plot to an object. Now, use the grid.arrange() function to arrange the plots you made into two columns and two rows.
+
+```{r, fig.width=10,fig.height=5}
+#Graphs of the populations of each borough by race
+
+hisp <-  census %>% 
+  filter(TotalPop != 0) %>%
+  ggplot(aes(x = Borough, y = Hispanic)) + 
+    geom_bar(stat = "identity", color = "dark green") +
+    labs(y = "Hispanic Population") +
+    coord_flip() +
+    theme_minimal()
+
+white <- census %>% 
+  filter(TotalPop != 0) %>%
+  ggplot(aes(x = Borough, y = White)) + 
+    geom_bar(stat = "identity", color = "purple") +
+    labs(y = "White Population") +
+    coord_flip() +
+    theme_minimal()
+
+black <- census %>% 
+  filter(TotalPop != 0) %>%
+  ggplot(aes(x = Borough, y = Black)) + 
+    geom_bar(stat = "identity", color = "orange") +
+    labs(y = "Black Population") +
+    coord_flip() +
+    theme_minimal()
+
+asian <- census %>% 
+  filter(TotalPop != 0) %>%
+  ggplot(aes(x = Borough, y = Asian)) + 
+    geom_bar(stat = "identity", color = "red") +
+    labs(y = "Asian Population") +
+    coord_flip() +
+    theme_minimal()
+
+grid.arrange(hisp, black, asian, white, nrow = 2, ncol = 2, top = "Total Population of Each Borough per Race")
+```
+
+From this graph, we can see that the racial makeup of the boroughs of NYC are fairly diverse, as the shapes of each graph look noticeably different. Each neighborhood has at least one race with a population over 500,000, with the exception of Staten Island, which has a smaller total population than the other boroughs.
+
+Next is a set of four scatter plots, one for each race group, showing the average income of a census tract versus the percent of a race that makes up the tract.
+To make it, again make one graph per race group saved into their own objects. For each, make a scatter plot with the percent of each race on the x-axis and income on the y-axis. Filter out any entries with zero for income or race percent. Then, use the grid.arrange() function to put these four graphs into two rows and two columns, just like the previous plot.
+
+```{r, fig.width=8,fig.height=6}
+#Income per borough by race
+
+inc_hisp <- census %>% 
+  filter(Income != 0 & TotalPop != 0) %>%
+  ggplot(aes(x = Hispanic_percent, y = Income)) + 
+    geom_point(color = "dark green", alpha = 0.2) +
+    labs(x = "Percent Hispanic", y = "Average Income") +
+    geom_smooth(color = "black") +
+    theme_minimal()
+
+inc_white <- census %>% 
+  filter(Income != 0 & TotalPop != 0) %>%
+  ggplot(aes(x = White_percent, y = Income)) + 
+    geom_point(color = "purple", alpha = 0.2) +
+    labs(x = "Percent White", y = "Average Income") +
+    geom_smooth(color = "black") +
+    theme_minimal()
+
+inc_black <- census %>% 
+  filter(Income != 0 & TotalPop != 0) %>%
+  ggplot(aes(x = Black_percent, y = Income)) + 
+    geom_point(color = "orange", alpha = 0.2) +
+    labs(x = "Percent Black", y = "Average Income") +
+    geom_smooth(color = "black") +
+    theme_minimal()
+
+inc_asian <- census %>% 
+  filter(Income != 0 & TotalPop != 0) %>%
+  ggplot(aes(x = Asian_percent, y = Income)) + 
+    geom_point(color = "red", alpha = 0.2) +
+    labs(x = "Percent Asian", y = "Average Income") +
+    geom_smooth(color = "black") +
+    theme_minimal()
+
+grid.arrange(inc_hisp, inc_black, inc_asian, inc_white, nrow = 2, ncol = 2, top = "Average Income per Borough by Percent of Each Race")
+```
+
+These graphs allow us to compare how the average income of a census tract changes as its racial makeup changes. Overall, the general trend is that as the percentage of any race except White increases, the average income of a tract decreases.
+There is one exception for tracts that are a majority of Black residents: tracts with close to 100% Black residents tend to have very similar average incomes as tracts with close to 0% Black residents. Note how the trend line for that graph starts at an average income around $60,000 dips as the percentage of Black residents increases, then rises again as the percentage nears 100%. 
+There is also a reversed pattern for White residents, where as the percentage of White residents increases, so does the average income of a tract.
+These patterns all suggest that there are notable disparities in wealth distribution among races in NYC. Particularly, that census tracts that are a majority of White residents have more wealth. This could correlate to a number of societal and economic issues for tracts with a low average income, like issues with healthcare access, poor education, or incarceration rates.
+
+On the topic of wealth, let's examine how poverty rates differ between census tracts. Below is another set of four scatter plots. Each shows the percentage of residents living in poverty versus the total population of each race in a tract.
+To make it, follow the exact same steps as above, but using the poverty variable instead of income.
+
+```{r, fig.width=8,fig.height=6}
+#Poverty per borough by race
+
+pov_hisp <- census %>% 
+  filter(Poverty != 0 & TotalPop != 0) %>%
+  ggplot(aes(x = Hispanic_percent, y = Poverty)) + 
+    geom_point(color = "dark green", alpha = 0.2) +
+    labs(x = "Percent Hispanic", y = "Poverty Rate") +
+    geom_smooth(color = "black") +
+    theme_minimal()
+
+pov_white <-  census %>% 
+  filter(Poverty != 0 & TotalPop != 0) %>%
+  ggplot(aes(x = White_percent, y = Poverty)) + 
+    geom_point(color = "purple", alpha = 0.2) +
+    labs(x = "Percent White", y = "Poverty Rate") +
+    geom_smooth(color = "black") +
+    theme_minimal()
+
+pov_black <-  census %>% 
+  filter(Poverty != 0 & TotalPop != 0) %>%
+  ggplot(aes(x = Black_percent, y = Poverty)) + 
+    geom_point(color = "orange", alpha = 0.2) +
+    labs(x = "Percent Black", y = "Poverty Rate") +
+    geom_smooth(color = "black") +
+    theme_minimal()
+
+pov_asian <-  census %>% 
+  filter(Poverty != 0 & TotalPop != 0) %>%
+  ggplot(aes(x = Asian_percent, y = Poverty)) + 
+    geom_point(color = "red", alpha = 0.2) +
+    labs(x = "Percent Asian", y = "Poverty Rate") +
+    geom_smooth(color = "black") +
+    theme_minimal()
+
+grid.arrange(pov_hisp, pov_black, pov_asian, pov_white, nrow = 2, ncol = 2, top = "Percent Poverty by Percent of Each Race per Borough")
+```
+
+There exists very similar patterns in poverty compared to income, just in the opposite direction. For all races except White, as the percentage of residents increases in a tract, so too does poverty, with the same caveat for Black residents as before. This similar relationship is likely due to how closely tied income and poverty are.
+
+### Mortality: Causes of Death
+
+Now that we have examined the disparities between races and wealth, let's move on to examine the causes of death affecting NYC. Below is a graph showing the age adjusted death rate for each cause of death.
+A death rate is found by the number of deaths per 100,000 people. An age adjusted death rate is a useful public health measurement because it takes into account the population size of each age group when looking at a number of deaths, so it provides a more truthful death rate.
+To make this graph, use the table of distinct death rates and make a bar chart with cause on the x-axis and age adjusted death rates on the y-axis. Fill the bars by the preventable variable. Use the coord_flip() function to make the cause labels easier to read.
+
+```{r, fig.width=10,fig.height=5}
+#Graph
+ggplot(death_rates_distinct, aes(x = reorder(Cause, Avg_age_adj_death_rate), y = Avg_age_adj_death_rate, fill = Preventable)) + 
+  geom_bar(stat = "Identity") +
+  labs(x = "Cause", y = "Average Age Adjusted Death Rate") +
+  ggtitle("Age Adjusted Death Rate per Cause of Death") +
+  coord_flip() +
+  theme_minimal()
+```
+
+From this graph, there are two main culprits: heart disease and cancer. These two causes of death have, by far, the highest death rates than any other cause, nearing rates of 150 and 200 respectively. The rest of the causes of death have fairly similar rates in comparison, spanning between 0 and 25.
+It is also worth noting that the majority of causes of death are preventable in some way. "All Other Causes" was listed as neither preventable nor not preventable since there would be no way of knowing if all of the other causes have interventions or treatments.
+
+Next, let's compare how the top causes of deaths affect each race. Are there causes of death that disproportionately affect people of some races more than others? Below is an interactive graph showing the top nine causes of death (by age adjusted death rate) and the percent of each race out of total deaths per cause. Hovering over a section of a bar will tell you the proportion of deaths experienced by a race for a given cause.
+To make this graph, make a variable of the top causes that you want to graph (I chose the top 9 since cause 10 and beyond did not have useful information). Then, make a bar chart object with race on the x-axis and the deaths per race on the y-axis. Fill the bars by race. We want to see the proportion of all deaths, so be sure to include position = "fill". We are going to use ggplotly to make this graph interactive, so use x = F as the x label since it does not display quite right when it's displayed. Again, use coord_flip() to make the labels easier to read. Then, use the ggplotly() function to make the plot interactive.
+
+```{r, fig.width=10,fig.height=5}
+#Graph
+top_9_causes <- c("Heart Disease", "Cancer", "All Other Causes", "Assault", "Influenza/Pneumonia", "Diabetes", "Stroke", "Chronic Lower Respiratory Diseases", "HIV")
+
+deaths_race_prop_plot <- deaths_totals_race %>% 
+  filter(Cause %in% top_9_causes) %>% 
+  ggplot(aes(x = reorder(Cause, Deaths_per_race), y = Deaths_per_race, fill = Race)) +
+    geom_bar(stat = "identity", position = "fill") +
+    labs(x = "Cause", y = "Proportion of All Deaths") +
+    ggtitle("Proportion of All Deaths per Cause by Race") +
+    coord_flip() +
+    theme_minimal()
+
+ggplotly(deaths_race_prop_plot)
+```
+
+When you look at the proportions for each cause, bear in mind the previous graph that showed us the total number of people of each race in NYC. For many of these causes, it would seem that White residents die from them the most, but this is due in part to the fact that there are simply more White people in NYC. Since White residents take up a significant portion of the population of NYC, we might expect them to make up a similar proportion of the total deaths as well. That said, there are clearly disparities for some of the causes of death. Note that we are not talking about suffering from a disease, but dying from it. A notable example is Diabetes: a death from diabetes can be prevented with insulin or medical treatment. Here, we can see that a larger proportion of Black residents make up the total deaths from diabetes than other causes. In fact, the proportions of Hispanic and Black residents are larger than the proportion of White residents that died from diabetes. This may be correlated to the fact that insulin is, both with and without insurance, an often expensive medication. This same trend is also present for deaths from strokes. What is most striking is deaths from HIV and assaults: there are no White deaths due to these causes, and they are overwhelmingly experienced by Black and, to a lesser extent, Hispanic residents.
+Based on these observations, there are notable disparities in how different causes of death affect people of different races. It may be worth exploring in future research how people of different races are affected by chronic versus infectious diseases.
+
+Let's now examine if people of certain races are disproportionately affected by preventable causes of death or not. Below is a set of bar graphs: the first shows the total number of deaths per race split by preventability, the second shows the proportion of deaths per race by preventability.
+To make this graph, start by making one bar chart object with race on the x-axis and deaths per race on the y-axis. Filter out any NA values for the race and the preventable variables. Fill by the preventable variable as well. Use position = "fill" to get the proportion of deaths. The second plot is the exact same as the first, but with position = "dodge" to see the number of deaths. Then, use the grid.arrange() function to arrange these two plots into one row and two columns, side by side. Now we can compare the proportion of deaths to the number of deaths per race.
+
+```{r, fig.width=10,fig.height=5}
+#Graphs of deaths by preventability per race
+
+deaths_totals_race_graph_1 <- deaths_totals_race %>%
+  filter(!is.na(Preventable) & !is.na(Race)) %>%
+  ggplot(aes(x = reorder(Race, Deaths_per_race), y = Deaths_per_race, fill = Preventable)) + 
+    geom_bar(stat = "identity", position = "fill") +
+    labs(x = "Race", y = "Percent of Deaths") +
+    theme_minimal()
+
+deaths_totals_race_graph_2 <- deaths_totals_race %>%
+  filter(!is.na(Preventable) & !is.na(Race)) %>%
+  ggplot(aes(x = reorder(Race, Deaths_per_race), y = Deaths_per_race, fill = Preventable)) + 
+    geom_bar(stat = "identity", position = "dodge") +
+    labs(x = "Race", y = "Number of Deaths") +
+    theme_minimal() +
+    theme(legend.position="none")
+
+grid.arrange(deaths_totals_race_graph_2, deaths_totals_race_graph_1, nrow = 1, ncol = 2, top = "Deaths by Preventability per Race, Excluding All Other Causes")
+```
+
+From these graphs, we can firstly note that the number of deaths scales by race somewhat similarly to the total population of NYC. The exception is that even though there are about 1 million more Hispanic residents than Black residents in NYC (as seen in a previous graph), here, Black residents experienced 25,000 more deaths than Hispanic residents. Secondly, we can note from the graph of proportion of deaths by preventability that each race tends to experience deaths from preventable and non-preventable causes the same.
+
+## Conclusions
+
+From all of these visualizations, there are a few notable conclusions on the disparities faced by the residents of NYC.
+
+-   Census tracts with fewer White residents tend to have lower average incomes and more residents living in poverty.
+-   Heart disease and cancer are responsible for the most deaths.
+-   The majority of the causes of death are preventable in some way, and preventable causes do not affect people of certain races more than others.
+-   There are disparities in how some causes of death affect people of certain races (diabetes, stroke, HIV, and assault disproportionately affect Black and Hispanic residents).
+
+When public health officials consider interventions to help lessen the burden of disease and prevent deaths, they must bear in mind their target demographics and areas of interest; an intervention applied to an entire population would be expensive and ineffective. If public health officials in New York City want to implement interventions involving any of the causes of deaths we examined, then they should consider both the racial demographics affected most severely and the economic disparities a target neighborhood may face.
+
+Future research into the topic of how demographics affect disease outcomes could focus on how chronic and infectious death rates differ between races and demographics. It would also be interesting to find out how insurance coverage or out-of-pocket medical costs differ between races and demographics. Those findings might help to explain some of the disparities found in this analysis.

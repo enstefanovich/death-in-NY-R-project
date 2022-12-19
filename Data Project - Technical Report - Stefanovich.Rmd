@@ -12,7 +12,7 @@ output:
 
 ### Introduction
 
-In public health, developing an intervention plan for a disease or condition means first understanding the issue you want to address inside an out. One step in this process is understanding how different people are affected and to what extent they are affected--after all, your efforts must be targeted in order to create a cost-effective plan. I am studying public health, so I wanted to try this process of discovering how different groups of people experience conditions differently. I ended up focusing on New York City, mainly due to my interest in urban health issues and the city being a large sample of a diverse American population.
+In public health, developing an intervention plan for a disease or condition means first understanding the issue you want to address inside and out. One step in this process is understanding how different people are affected and to what extent they are affected--after all, your efforts must be targeted in order to create a cost-effective plan. I am studying public health, so I wanted to try this process of discovering how different groups of people experience conditions differently. I ended up focusing on New York City, mainly due to my interest in urban health issues and the city being a large sample of a diverse American population.
 
 I focused on two main aspects of New York City (NYC): their demographics and the causes of death they experience.
 As such, I found two data sets to analyze.
